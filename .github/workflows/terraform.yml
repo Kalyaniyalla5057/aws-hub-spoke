@@ -10,64 +10,32 @@ on:
         type: choice
         options:
           - plan
-      debug_oidc:
-        description: Display non-sensitive GitHub OIDC claims for IAM trust-policy troubleshooting
-        required: false
-        type: boolean
-        default: false
-  issue_comment:
-    types: [created]
 
 permissions:
   contents: read
   id-token: write
-  pull-requests: read
 
 concurrency:
   group: terraform-${{ github.ref_name }}
   cancel-in-progress: false
 
 jobs:
-  branch-guard:
-    if: >-
-      github.event_name != 'issue_comment' ||
-      github.event.issue.pull_request &&
-      (startsWith(github.event.comment.body, '/plan') 
-    runs-on: ubuntu-latest
-    steps:
-      - name: Reject main and non-branch refs
-        shell: bash
-        run: |
-          if [[ "${GITHUB_EVENT_NAME}" == "issue_comment" ]]; then
-            target_ref="$(jq -r '.issue.pull_request.head.ref' "${GITHUB_EVENT_PATH}")"
-          else
-            target_ref="${GITHUB_REF_NAME}"
-          fi
-          if [[ -z "${target_ref}" || "${target_ref}" == "main" ]]; then
-            echo "Terraform may run only from branches other than main."
-            exit 1
-          fi
-
   terraform:
-    # Pushes create plans; apply and destroy are manual-only operations or PR comments.
-    needs: branch-guard
-    if: >-
-      github.event_name != 'issue_comment' ||
-      (github.event.issue.pull_request &&
-      (startsWith(github.event.comment.body, '/plan') 
+    if: github.ref_name != 'main'
+
     runs-on: ubuntu-latest
+
     environment: ${{ github.ref_name }}
+
+    env:
       TF_IN_AUTOMATION: "true"
       TF_INPUT: "false"
-      # Repository/environment variables override these defaults when configured.
       TF_VAR_region: ${{ vars.AWS_REGION || 'us-east-1' }}
       TF_VAR_availability_zones: ${{ vars.TF_AVAILABILITY_ZONES || '["us-east-1a", "us-east-1b"]' }}
 
     steps:
-      - name: Check out selected branch
+      - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || github.ref }}
 
       - name: Verify AWS OIDC configuration
         shell: bash
@@ -75,33 +43,15 @@ jobs:
           AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
         run: |
           if [[ -z "${AWS_ROLE_ARN}" ]]; then
-            echo "AWS_ROLE_ARN is not available. Add it as a repository secret, or as a secret in the selected GitHub Environment."
-            exit 1
-          fi
-          if [[ "${AWS_ROLE_ARN}" != arn:aws:iam::*:role/* ]]; then
-            echo "AWS_ROLE_ARN must contain the full IAM role ARN, for example arn:aws:iam::313932316713:role/github-actions-aws-hub-spoke-terraform."
+            echo "AWS_ROLE_ARN is not available."
+            echo "Add AWS_ROLE_ARN as a repository or environment secret."
             exit 1
           fi
 
-      - name: Display OIDC claims for troubleshooting
-        if: github.event_name == 'push' || inputs.debug_oidc || startsWith(github.event.comment.body, '/')
-        shell: bash
-        run: |
-          token_response=$(curl --fail-with-body --silent --show-error \
-            -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
-            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com")
-          token=$(jq --raw-output '.value' <<< "${token_response}")
-          OIDC_TOKEN="${token}" node <<'NODE'
-          const claims = JSON.parse(Buffer.from(process.env.OIDC_TOKEN.split(".")[1], "base64url"));
-          console.log(JSON.stringify({
-            sub: claims.sub,
-            aud: claims.aud,
-            ref: claims.ref,
-            repository: claims.repository,
-            repository_owner: claims.repository_owner,
-            environment: claims.environment,
-          }, null, 2));
-          NODE
+          if [[ "${AWS_ROLE_ARN}" != arn:aws:iam::*:role/* ]]; then
+            echo "AWS_ROLE_ARN must contain the full IAM role ARN."
+            exit 1
+          fi
 
       - name: Configure AWS credentials using OIDC
         uses: aws-actions/configure-aws-credentials@v6
@@ -116,17 +66,14 @@ jobs:
           terraform_version: "1.10.0"
           terraform_wrapper: false
 
-      - name: Check formatting
+      - name: Check Terraform formatting
         run: terraform fmt -check -recursive
 
       - name: Initialize Terraform
         run: terraform init -input=false
 
-      - name: Validate configuration
+      - name: Validate Terraform configuration
         run: terraform validate
 
-      - name: Create plan
-        if: github.event_name == 'push' || inputs.command == 'plan' || inputs.command == 'apply' || startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/apply')
-        run: terraform plan -input=false -out=tfplan
-
-      - 
+      - name: Create Terraform plan
+        run: terraform plan -input=false
