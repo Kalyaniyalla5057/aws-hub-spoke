@@ -10,8 +10,6 @@ on:
         type: choice
         options:
           - plan
-          - apply
-          - destroy
       debug_oidc:
         description: Display non-sensitive GitHub OIDC claims for IAM trust-policy troubleshooting
         required: false
@@ -34,9 +32,7 @@ jobs:
     if: >-
       github.event_name != 'issue_comment' ||
       github.event.issue.pull_request &&
-      (startsWith(github.event.comment.body, '/plan') ||
-      startsWith(github.event.comment.body, '/apply') ||
-      startsWith(github.event.comment.body, '/destroy'))
+      (startsWith(github.event.comment.body, '/plan') 
     runs-on: ubuntu-latest
     steps:
       - name: Reject main and non-branch refs
@@ -58,12 +54,9 @@ jobs:
     if: >-
       github.event_name != 'issue_comment' ||
       (github.event.issue.pull_request &&
-      (startsWith(github.event.comment.body, '/plan') ||
-      startsWith(github.event.comment.body, '/apply') ||
-      startsWith(github.event.comment.body, '/destroy')))
+      (startsWith(github.event.comment.body, '/plan') 
     runs-on: ubuntu-latest
-    environment: ${{ (github.event_name == 'push' || inputs.command == 'plan' || startsWith(github.event.comment.body, '/plan')) && 'terraform-plan' || 'terraform-changes' }}
-    env:
+    environment: ${{ github.ref_name }}
       TF_IN_AUTOMATION: "true"
       TF_INPUT: "false"
       # Repository/environment variables override these defaults when configured.
@@ -136,14 +129,4 @@ jobs:
         if: github.event_name == 'push' || inputs.command == 'plan' || inputs.command == 'apply' || startsWith(github.event.comment.body, '/plan') || startsWith(github.event.comment.body, '/apply')
         run: terraform plan -input=false -out=tfplan
 
-      - name: Apply plan
-        if: inputs.command == 'apply' || startsWith(github.event.comment.body, '/apply')
-        run: terraform apply -input=false -auto-approve tfplan
-
-      - name: Create destroy plan
-        if: inputs.command == 'destroy' || startsWith(github.event.comment.body, '/destroy')
-        run: terraform plan -destroy -input=false -out=tfdestroy
-
-      - name: Destroy managed infrastructure
-        if: inputs.command == 'destroy' || startsWith(github.event.comment.body, '/destroy')
-        run: terraform apply -input=false -auto-approve tfdestroy
+      - 
